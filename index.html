@@ -51,7 +51,7 @@
   @media(max-width:560px){.compass{display:none;}}
 
   nav.tabs{
-    display:flex;flex-wrap:wrap;gap:6px;justify-content:center;
+    display:flex;flex-direction:column;gap:16px;
     margin-bottom:22px;
   }
   nav.tabs button{
@@ -136,12 +136,39 @@
   .banner.tip{background:rgba(201,162,39,.14);border:1px solid var(--brass);color:#EAD9A0;}
   .banner.success{background:rgba(76,175,109,.14);border:1px solid #4CAF6D;color:#BFEACB;}
 
+  .hidden{display:none !important;}
+
+  .back-btn{
+    font-family:'Inter',sans-serif;font-size:12.5px;font-weight:600;
+    background:transparent;color:var(--muted);
+    border:1px solid var(--line);padding:7px 14px;border-radius:20px;
+    cursor:pointer;margin-bottom:16px;
+  }
+  .back-btn:hover{color:var(--parchment);border-color:var(--muted);}
+  .back-row{margin-bottom:24px;}
+  .tab-group-centered{text-align:center;}
+  .tab-group-centered .tab-row{justify-content:center;}
   .tab-group{margin-bottom:10px;}
   .tab-group-label{
     font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.14em;
     text-transform:uppercase;color:var(--muted);margin-bottom:6px;
   }
   .tab-row{display:flex;flex-wrap:wrap;gap:6px;}
+
+  .switch-prompt{
+    margin-top:18px;padding:12px 16px;
+    border:1px dashed var(--line);border-radius:6px;
+    display:flex;align-items:center;justify-content:space-between;gap:14px;
+    flex-wrap:wrap;
+  }
+  .switch-prompt-text{font-size:12.5px;color:var(--muted);line-height:1.5;}
+  .switch-prompt button{
+    font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;
+    background:transparent;color:var(--brass);
+    border:1px solid var(--brass);padding:8px 14px;border-radius:20px;
+    cursor:pointer;white-space:nowrap;
+  }
+  .switch-prompt button:hover{background:var(--brass);color:var(--ink);}
 
   .modal-overlay{
     position:fixed;inset:0;background:rgba(6,10,18,.7);
@@ -176,25 +203,29 @@
     <svg class="compass" width="56" height="56" viewBox="0 0 56 56"><circle cx="28" cy="28" r="24" fill="none" stroke="#C9A227" stroke-width="1"/><path d="M28 6 L31 26 L28 28 L25 26 Z" fill="#C9A227"/><path d="M28 50 L25 30 L28 28 L31 30 Z" fill="#C9A227" opacity=".5"/><circle cx="28" cy="28" r="2" fill="#C9A227"/></svg>
   </header>
 
-  <nav class="tabs" id="tabs"></nav>
+  <section id="atelierScreen">
+    <nav class="tabs" id="tabs"></nav>
 
-  <div class="stage">
-    <div class="toolbar">
-      <div class="palette" id="palette"></div>
-      <div style="display:flex;gap:10px;align-items:center;">
-        <div class="readout readout-regions" id="readoutRegions">0/0 regiões pintadas</div>
-        <div class="readout" id="readout">0 cores usadas</div>
-        <button class="clear-btn" id="clearBtn">Limpar</button>
+    <div class="stage">
+      <div class="toolbar">
+        <div class="palette" id="palette"></div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <div class="readout readout-regions" id="readoutRegions">0/0 regiões pintadas</div>
+          <div class="readout" id="readout">0 cores usadas</div>
+          <button class="clear-btn" id="clearBtn">Limpar</button>
+        </div>
       </div>
+      <div class="canvas-holder">
+        <svg id="svg" viewBox="0 0 600 600"></svg>
+      </div>
+      <div class="banner hidden" id="banner"></div>
+      <div class="note" id="note"></div>
     </div>
-    <div class="canvas-holder">
-      <svg id="svg" viewBox="0 0 600 600"></svg>
-    </div>
-    <div class="banner hidden" id="banner"></div>
-    <div class="note" id="note"></div>
-  </div>
 
-  <footer>protótipo · v0.1 · ateliê de matemática</footer>
+    <div id="switchPromptContainer"></div>
+  </section>
+
+  <footer>ateliê de coloração · v1.0 · Witássio Oliveira (UFAL)</footer>
 </div>
 
   <div class="modal-overlay hidden" id="modalOverlay">
@@ -462,25 +493,63 @@ function computeAdjacency(key, regions){
   if(key==='eua') return idPairsToIndex(US_ADJ, regions);
   if(key==='alemanha') return idPairsToIndex(DE_ADJ, regions);
   if(key==='reino_unido') return computePathAdjacency(regions, 3, 8);
+  if(key==='toro' || key==='klein'){
+    const internal = computeGeomAdjacency(regions);
+    const wrap = computeWrapAdjacency(regions, {xMin:-280,xMax:280,yMin:-280,yMax:280}, key==='klein'?'klein':'torus');
+    const seen = new Set(internal.map(p=>p[0]+'_'+p[1]));
+    wrap.forEach(p=>{
+      const k = p[0]+'_'+p[1];
+      if(!seen.has(k)){ seen.add(k); internal.push(p); }
+    });
+    return internal;
+  }
   return computeGeomAdjacency(regions);
+}
+
+// Border-identification adjacency for closed surfaces built from a rectangular
+// fundamental polygon (labyrinth-style cells). 'torus': left~right and top~bottom
+// glued with matching orientation. 'klein': left~right glued normally, but
+// top~bottom glued with a flip (mirrored), which is what gives the Klein bottle
+// its twist.
+function computeWrapAdjacency(regions, bounds, mode){
+  const {xMin,xMax,yMin,yMax} = bounds;
+  const eps = 0.5;
+  const leftCells=[], rightCells=[], topCells=[], bottomCells=[];
+  regions.forEach((r,idx)=>{
+    const xs = r.pts.map(p=>p[0]), ys = r.pts.map(p=>p[1]);
+    const x0=Math.min(...xs), x1=Math.max(...xs), y0=Math.min(...ys), y1=Math.max(...ys);
+    if(Math.abs(x0-xMin)<eps) leftCells.push({idx, a:y0, b:y1});
+    if(Math.abs(x1-xMax)<eps) rightCells.push({idx, a:y0, b:y1});
+    if(Math.abs(y0-yMin)<eps) topCells.push({idx, a:x0, b:x1});
+    if(Math.abs(y1-yMax)<eps) bottomCells.push({idx, a:x0, b:x1});
+  });
+  function overlap(a0,a1,b0,b1){ return Math.min(a1,b1) - Math.max(a0,b0) > eps; }
+  const pairs = [];
+  leftCells.forEach(L=>{
+    rightCells.forEach(R=>{
+      if(L.idx!==R.idx && overlap(L.a,L.b,R.a,R.b)) pairs.push([Math.min(L.idx,R.idx),Math.max(L.idx,R.idx)]);
+    });
+  });
+  topCells.forEach(T=>{
+    bottomCells.forEach(B=>{
+      if(T.idx===B.idx) return;
+      const match = mode==='klein' ? overlap(T.a,T.b,-B.b,-B.a) : overlap(T.a,T.b,B.a,B.b);
+      if(match) pairs.push([Math.min(T.idx,B.idx),Math.max(T.idx,B.idx)]);
+    });
+  });
+  return pairs;
 }
 
 // ---------- Map registry ----------
 const MAPS = {
-  spiral110: {
-    label:'Espiral', n:'110 regiões', group:'desafio',
-    note:'Este é o mapa real de William McGregor, publicado por Martin Gardner na Scientific American de abril de 1975 como uma brincadeira de 1º de abril — a "prova" (falsa) de que o teorema das quatro cores estava errado e seriam necessárias 5 cores. Na verdade, 4 cores bastam também aqui — mas encontrar essa coloração é um baita desafio. (Mapa vetorial: cs.cmu.edu/~bryant/boolean.)',
-    build:()=>({regions: MCGREGOR_REGIONS, viewbox:[0,0,420,440]})
-  },
-  spiral112: {
-    label:'Espiral variante', n:'~120 regiões', group:'desafio',
-    note:'Uma variante ainda mais densa da espiral anterior, com mais anéis e um deslocamento diferente entre as fileiras — o desafio mais difícil do conjunto.',
-    build:()=>buildSpiralMap(10,3,42)
-  },
-  labyrinth: {
-    label:'Labirinto', n:'~24 regiões', group:'desafio',
-    note:'Um mapa de aquecimento antes da espiral: poucas regiões, mas com vizinhanças pouco óbvias — bom para começar a testar estratégias de coloração.',
-    build:()=>buildLabyrinthMap(3, 24)
+  alemanha: {
+    label:'Alemanha', n:'16 estados', group:'real',
+    note:'Mapa real dos 16 estados federados (Bundesländer). (Fronteiras: simplemaps.com, uso livre com atribuição.)',
+    build:()=>({
+      regions: DE_REGIONS.map(r=>({d:r.d, title:DE_NAMES[r.id]||r.id, id:r.id})),
+      viewbox:[0,0,300,300],
+      transform:'0.3,0,0,0.3,0,0'
+    })
   },
   brasil: {
     label:'Brasil', n:'27 estados', group:'real',
@@ -498,15 +567,6 @@ const MAPS = {
       viewbox:[0,0,1000,589]
     })
   },
-  alemanha: {
-    label:'Alemanha', n:'16 estados', group:'real',
-    note:'Mapa real dos 16 estados federados (Bundesländer). (Fronteiras: simplemaps.com, uso livre com atribuição.)',
-    build:()=>({
-      regions: DE_REGIONS.map(r=>({d:r.d, title:DE_NAMES[r.id]||r.id, id:r.id})),
-      viewbox:[0,0,300,300],
-      transform:'0.3,0,0,0.3,0,0'
-    })
-  },
   reino_unido: {
     label:'Reino Unido', n:'54 áreas', group:'real',
     note:'Mapa real dos condados e regiões da Inglaterra e do País de Gales (54 áreas administrativas). Os dados de origem não trazem nomes legíveis para cada área — ao passar o mouse você vê o código da região, mas a coloração funciona normalmente. (Fronteiras: simplemaps.com, uso livre com atribuição.)',
@@ -515,15 +575,41 @@ const MAPS = {
       viewbox:[31.6385,127.7833,193.0954,175.8299],
       transform:'0.2178,0,0,0.2178,0,0'
     })
-  }
+  },
+  labyrinth: {
+    label:'Labirinto', n:'~24 regiões', group:'desafio',
+    note:'Um mapa de aquecimento antes da espiral: poucas regiões, mas com vizinhanças pouco óbvias — bom para começar a testar estratégias de coloração.',
+    build:()=>buildLabyrinthMap(3, 24)
+  },
+  spiral110: {
+    label:'Espiral', n:'110 regiões', group:'desafio',
+    note:'Este é o mapa real de William McGregor, publicado por Martin Gardner na Scientific American de abril de 1975 como uma brincadeira de 1º de abril — a "prova" (falsa) de que o teorema das quatro cores estava errado e seriam necessárias 5 cores. Na verdade, 4 cores bastam também aqui — mas encontrar essa coloração é um baita desafio. (Mapa vetorial: cs.cmu.edu/~bryant/boolean.)',
+    build:()=>({regions: MCGREGOR_REGIONS, viewbox:[0,0,420,440]})
+  },
+  spiral112: {
+    label:'Espiral variante', n:'~120 regiões', group:'desafio',
+    note:'Uma variante ainda mais densa da espiral anterior, com mais anéis e um deslocamento diferente entre as fileiras — o desafio mais difícil do conjunto.',
+    build:()=>buildSpiralMap(10,3,42)
+  },
+  toro: {
+    label:'Toro', n:'~24 regiões', group:'superficies', maxColors:7,
+    note:'Mesmo esquema do Labirinto, mas em uma superfície fechada: a borda esquerda deste retângulo "cola" na borda direita, e a de cima cola na de baixo — como na tela de um jogo estilo Pac-Man. Essa colagem cria vizinhanças extras que não existem num mapa plano, e por isso o toro pode exigir até 7 cores. (As bordas douradas se colam uma na outra, assim como as azuis — uma região encostada numa borda é vizinha de quem encosta na borda de mesma cor do lado oposto.)',
+    build:()=>buildLabyrinthMap(11, 24)
+  },
+  klein: {
+    label:'Garrafa de Klein', n:'~24 regiões', group:'superficies', maxColors:6,
+    note:'Como o Toro, a borda esquerda cola na direita — mas a colagem de cima para baixo é invertida (com uma torção), a marca registrada da garrafa de Klein: uma superfície sem "dentro" nem "fora". Aqui bastam até 6 cores, mas a vizinhança invertida na borda de cima/baixo torna a exploração mais traiçoeira. (Bordas douradas se colam normalmente; as bordas azuis pontilhadas se colam invertidas — o canto esquerdo de cima encosta no canto direito de baixo.)',
+    build:()=>buildLabyrinthMap(17, 24)
+  },
 };
-const MAP_GROUPS = [
-  ['desafio', 'Mapas-desafio'],
-  ['real', 'Mapas reais']
-];
+function groupsForCategory(cat){
+  if(cat==='superficies') return [['superficies', 'Superfícies fechadas']];
+  return [['real', 'Mapas reais'], ['desafio', 'Mapas-desafio']];
+}
 
 // ---------- App state ----------
-let current = 'spiral110';
+let category = 'principal';
+let current = 'alemanha';
 let selectedColor = 0;
 let regionColors = {};
 let mapCache = {};
@@ -531,6 +617,7 @@ let wasComplete = false;
 
 const svgEl = document.getElementById('svg');
 const tabsEl = document.getElementById('tabs');
+const switchPromptContainerEl = document.getElementById('switchPromptContainer');
 const paletteEl = document.getElementById('palette');
 const readoutEl = document.getElementById('readout');
 const readoutRegionsEl = document.getElementById('readoutRegions');
@@ -559,11 +646,30 @@ function switchMap(key){
   render();
 }
 
+function switchCategory(cat){
+  category = cat;
+  const groups = groupsForCategory(cat);
+  const firstEntry = Object.entries(MAPS).find(([k,m])=> groups.some(([g])=>g===m.group));
+  switchMap(firstEntry[0]);
+}
+
 function renderTabs(){
   tabsEl.innerHTML = '';
-  MAP_GROUPS.forEach(([gKey, gLabel])=>{
+
+  if(category==='superficies'){
+    const backRow = document.createElement('div');
+    backRow.className = 'back-row';
+    const backBtn = document.createElement('button');
+    backBtn.className = 'back-btn';
+    backBtn.textContent = '← Voltar aos mapas';
+    backBtn.onclick = ()=>switchCategory('principal');
+    backRow.appendChild(backBtn);
+    tabsEl.appendChild(backRow);
+  }
+
+  groupsForCategory(category).forEach(([gKey, gLabel])=>{
     const wrap = document.createElement('div');
-    wrap.className = 'tab-group';
+    wrap.className = 'tab-group tab-group-centered';
     const h = document.createElement('div');
     h.className = 'tab-group-label';
     h.textContent = gLabel;
@@ -580,6 +686,19 @@ function renderTabs(){
     wrap.appendChild(row);
     tabsEl.appendChild(wrap);
   });
+}
+
+function renderSwitchPrompt(){
+  switchPromptContainerEl.innerHTML = '';
+  if(category!=='principal') return;
+  const prompt = document.createElement('div');
+  prompt.className = 'switch-prompt';
+  prompt.innerHTML = `<div class="switch-prompt-text">Já explorou os mapas-desafio? Existe uma categoria de mapas ainda mais exigente, em superfícies fechadas — onde 4 cores podem não bastar.</div>`;
+  const goBtn = document.createElement('button');
+  goBtn.textContent = 'Superfícies fechadas →';
+  goBtn.onclick = ()=>switchCategory('superficies');
+  prompt.appendChild(goBtn);
+  switchPromptContainerEl.appendChild(prompt);
 }
 
 function renderPalette(){
@@ -624,6 +743,28 @@ function renderMap(){
     };
     container.appendChild(path);
   });
+
+  if(current==='toro' || current==='klein'){
+    const isKlein = current==='klein';
+    const mkLine = (x1,y1,x2,y2,color,dash)=>{
+      const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+      line.setAttribute('x1',x1); line.setAttribute('y1',y1);
+      line.setAttribute('x2',x2); line.setAttribute('y2',y2);
+      line.setAttribute('stroke', color);
+      line.setAttribute('stroke-width', 4);
+      line.setAttribute('stroke-dasharray', dash);
+      line.setAttribute('stroke-linecap','round');
+      container.appendChild(line);
+    };
+    // left/right edges: always identified with matching orientation (both maps)
+    mkLine(-280,-280,-280,280,'#C9A227','14 8');
+    mkLine(280,-280,280,280,'#C9A227','14 8');
+    // top/bottom edges: matching orientation on the torus, flipped (dotted) on the Klein bottle
+    const tbDash = isKlein ? '2 7' : '14 8';
+    mkLine(-280,-280,280,-280,'#3D8BFF',tbDash);
+    mkLine(-280,280,280,280,'#3D8BFF',tbDash);
+  }
+
   svgEl.appendChild(container);
 }
 
@@ -668,14 +809,15 @@ function checkCompletion(){
     if(regionColors[i] !== undefined && regionColors[i] === regionColors[j]){ conflict = true; break; }
   }
   const usedColors = new Set(Object.values(regionColors)).size;
+  const maxColors = MAPS[current].maxColors || 4;
 
   let kind, text;
   if(conflict){
     kind = 'error';
     text = 'Há um erro: existem regiões vizinhas com a mesma cor. Reveja o mapa e tente novamente.';
-  } else if(usedColors > 4){
+  } else if(usedColors > maxColors){
     kind = 'tip';
-    text = `Mapa pintado corretamente, usando ${usedColors} cores! Será que dá pra colorir esse mesmo mapa usando 4 cores ou menos?`;
+    text = `Mapa pintado corretamente, usando ${usedColors} cores! Será que dá pra colorir esse mesmo mapa usando ${maxColors} cores ou menos?`;
   } else {
     kind = 'success';
     text = `Parabéns! Você coloriu o mapa inteiro usando apenas ${usedColors} ${usedColors===1?'cor':'cores'}, sem nenhum conflito entre vizinhos. Bora tentar outro mapa no ateliê?`;
@@ -692,6 +834,7 @@ function render(){
   renderMap();
   updateReadout();
   noteEl.innerHTML = `<b>Sobre este mapa:</b> ${MAPS[current].note}`;
+  renderSwitchPrompt();
 }
 
 document.getElementById('clearBtn').onclick = ()=>{ regionColors = {}; wasComplete = false; hideBanner(); hideModal(); renderMap(); updateReadout(); };
