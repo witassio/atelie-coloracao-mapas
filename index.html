@@ -109,6 +109,8 @@
     cursor:pointer;
   }
   .clear-btn:hover{color:var(--parchment);border-color:var(--muted);}
+  .graph-btn.active{background:var(--brass);color:var(--ink);border-color:var(--brass);font-weight:700;}
+  .graph-btn.active:hover{color:var(--ink);}
 
   .canvas-holder{
     display:flex;justify-content:center;align-items:center;
@@ -212,6 +214,7 @@
         <div style="display:flex;gap:10px;align-items:center;">
           <div class="readout readout-regions" id="readoutRegions">0/0 regiões pintadas</div>
           <div class="readout" id="readout">0 cores usadas</div>
+          <button class="clear-btn graph-btn hidden" id="graphBtn">Grafo</button>
           <button class="clear-btn" id="clearBtn">Limpar</button>
         </div>
       </div>
@@ -225,7 +228,7 @@
     <div id="switchPromptContainer"></div>
   </section>
 
-  <footer>ateliê de coloração · v1.0 · Witássio Oliveira (IM - UFAL)</footer>
+  <footer>ateliê de coloração · v1.1 · Witássio Oliveira (UFAL)</footer>
 </div>
 
   <div class="modal-overlay hidden" id="modalOverlay">
@@ -592,13 +595,13 @@ const MAPS = {
     build:()=>buildSpiralMap(10,3,42)
   },
   toro: {
-    label:'Toro', n:'~24 regiões', group:'superficies', maxColors:7,
-    note:'Mesmo esquema do Labirinto, mas em uma superfície fechada: a borda esquerda deste retângulo "cola" na borda direita, e a de cima cola na de baixo — como na tela de um jogo estilo Pac-Man. Essa colagem cria vizinhanças extras que não existem num mapa plano, e por isso o toro pode exigir até 7 cores. (As bordas douradas se colam uma na outra, assim como as azuis — uma região encostada numa borda é vizinha de quem encosta na borda de mesma cor do lado oposto.)',
+    label:'Toro', n:'~24 regiões', group:'superficies', maxColors:4,
+    note:'Mesmo esquema do Labirinto, mas em uma superfície fechada: a borda esquerda deste retângulo "cola" na borda direita, e a de cima cola na de baixo — como na tela de um jogo estilo Pac-Man. Essa colagem cria vizinhanças extras que não existem num mapa plano. No pior caso, um mapa no toro pode exigir até 7 cores (limite de Heawood) — mas este mapa específico não chega perto disso: o mínimo real, verificado por busca exaustiva, é 4 cores. (As bordas douradas se colam uma na outra, assim como as azuis — uma região encostada numa borda é vizinha de quem encosta na borda de mesma cor do lado oposto.) Use o botão "Grafo" para ver as regiões como pontos ligados por linhas — é mais fácil enxergar onde há choque de cores.',
     build:()=>buildLabyrinthMap(11, 24)
   },
   klein: {
-    label:'Garrafa de Klein', n:'~24 regiões', group:'superficies', maxColors:6,
-    note:'Como o Toro, a borda esquerda cola na direita — mas a colagem de cima para baixo é invertida (com uma torção), a marca registrada da garrafa de Klein: uma superfície sem "dentro" nem "fora". Aqui bastam até 6 cores, mas a vizinhança invertida na borda de cima/baixo torna a exploração mais traiçoeira. (Bordas douradas se colam normalmente; as bordas azuis pontilhadas se colam invertidas — o canto esquerdo de cima encosta no canto direito de baixo.)',
+    label:'Garrafa de Klein', n:'~24 regiões', group:'superficies', maxColors:4,
+    note:'Como o Toro, a borda esquerda cola na direita — mas a colagem de cima para baixo é invertida (com uma torção), a marca registrada da garrafa de Klein: uma superfície sem "dentro" nem "fora". No pior caso, um mapa na garrafa de Klein pode exigir até 6 cores (teorema de Franklin) — mas este mapa específico não chega perto disso: o mínimo real, verificado por busca exaustiva, é 4 cores. A vizinhança invertida na borda de cima/baixo torna a exploração mais traiçoeira mesmo assim. (Bordas douradas se colam normalmente; as bordas azuis pontilhadas se colam invertidas — o canto esquerdo de cima encosta no canto direito de baixo.) Use o botão "Grafo" para ver as regiões como pontos ligados por linhas — é mais fácil enxergar onde há choque de cores.',
     build:()=>buildLabyrinthMap(17, 24)
   },
 };
@@ -614,6 +617,7 @@ let selectedColor = 0;
 let regionColors = {};
 let mapCache = {};
 let wasComplete = false;
+let viewMode = 'map';
 
 const svgEl = document.getElementById('svg');
 const tabsEl = document.getElementById('tabs');
@@ -621,6 +625,7 @@ const switchPromptContainerEl = document.getElementById('switchPromptContainer')
 const paletteEl = document.getElementById('palette');
 const readoutEl = document.getElementById('readout');
 const readoutRegionsEl = document.getElementById('readoutRegions');
+const graphBtnEl = document.getElementById('graphBtn');
 const noteEl = document.getElementById('note');
 const bannerEl = document.getElementById('banner');
 const modalOverlay = document.getElementById('modalOverlay');
@@ -632,7 +637,19 @@ function getMapData(key){
   if(!mapCache[key]){
     const raw = MAPS[key].build();
     const adjacency = computeAdjacency(key, raw.regions);
-    mapCache[key] = {regions: raw.regions, viewbox: raw.viewbox, transform: raw.transform, adjacency};
+    let wrapSet = null;
+    if(key==='toro' || key==='klein'){
+      const wrapPairs = computeWrapAdjacency(raw.regions, {xMin:-280,xMax:280,yMin:-280,yMax:280}, key==='klein'?'klein':'torus');
+      wrapSet = new Set(wrapPairs.map(p=>Math.min(p[0],p[1])+'_'+Math.max(p[0],p[1])));
+    }
+    const centroids = raw.regions.map(r=>{
+      const pts = r.pts;
+      if(!pts) return [0,0];
+      let sx=0, sy=0;
+      pts.forEach(p=>{sx+=p[0]; sy+=p[1];});
+      return [sx/pts.length, sy/pts.length];
+    });
+    mapCache[key] = {regions: raw.regions, viewbox: raw.viewbox, transform: raw.transform, adjacency, wrapSet, centroids};
   }
   return mapCache[key];
 }
@@ -641,6 +658,7 @@ function switchMap(key){
   current = key;
   regionColors = {};
   wasComplete = false;
+  viewMode = 'map';
   hideBanner();
   hideModal();
   render();
@@ -712,6 +730,21 @@ function renderPalette(){
   });
 }
 
+function handleRegionClick(idx){
+  if(regionColors[idx] === selectedColor){
+    delete regionColors[idx];
+  } else {
+    regionColors[idx] = selectedColor;
+  }
+  renderCanvas();
+  updateReadout();
+  checkCompletion();
+}
+
+function renderCanvas(){
+  if(viewMode==='graph'){ renderGraph(); } else { renderMap(); }
+}
+
 function renderMap(){
   const map = getMapData(current);
   const [x,y,w,h] = map.viewbox;
@@ -731,16 +764,7 @@ function renderMap(){
     }
     const colIdx = regionColors[idx];
     path.style.fill = colIdx===undefined ? '#242F49' : COLORS[colIdx];
-    path.onclick = ()=>{
-      if(regionColors[idx] === selectedColor){
-        delete regionColors[idx];
-      } else {
-        regionColors[idx] = selectedColor;
-      }
-      renderMap();
-      updateReadout();
-      checkCompletion();
-    };
+    path.onclick = ()=>handleRegionClick(idx);
     container.appendChild(path);
   });
 
@@ -764,6 +788,47 @@ function renderMap(){
     mkLine(-280,-280,280,-280,'#3D8BFF',tbDash);
     mkLine(-280,280,280,280,'#3D8BFF',tbDash);
   }
+
+  svgEl.appendChild(container);
+}
+
+// Graph view: vertices = regions (placed at their centroid), edges = adjacency
+// (including the "glued" border adjacency on the torus/Klein bottle). Edges
+// between two same-colored vertices are highlighted, to make clashes easy to spot.
+function renderGraph(){
+  const map = getMapData(current);
+  const [x,y,w,h] = map.viewbox;
+  svgEl.setAttribute('viewBox', `${x} ${y} ${w} ${h}`);
+  svgEl.innerHTML = '';
+  const container = document.createElementNS('http://www.w3.org/2000/svg','g');
+
+  map.adjacency.forEach(([i,j])=>{
+    const [x1,y1] = map.centroids[i];
+    const [x2,y2] = map.centroids[j];
+    const conflict = regionColors[i] !== undefined && regionColors[i] === regionColors[j];
+    const isWrap = map.wrapSet && map.wrapSet.has(Math.min(i,j)+'_'+Math.max(i,j));
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1',x1); line.setAttribute('y1',y1);
+    line.setAttribute('x2',x2); line.setAttribute('y2',y2);
+    line.setAttribute('stroke', conflict ? '#E63946' : '#5A6B8C');
+    line.setAttribute('stroke-width', conflict ? 3.4 : 1.3);
+    if(isWrap && !conflict){ line.setAttribute('stroke-dasharray','5 5'); }
+    container.appendChild(line);
+  });
+
+  map.regions.forEach((reg,idx)=>{
+    const [cx,cy] = map.centroids[idx];
+    const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    circle.setAttribute('cx',cx); circle.setAttribute('cy',cy);
+    circle.setAttribute('r', 9);
+    const colIdx = regionColors[idx];
+    circle.setAttribute('fill', colIdx===undefined ? '#242F49' : COLORS[colIdx]);
+    circle.setAttribute('stroke', '#EDE4CC');
+    circle.setAttribute('stroke-width', 1.4);
+    circle.style.cursor = 'pointer';
+    circle.onclick = ()=>handleRegionClick(idx);
+    container.appendChild(circle);
+  });
 
   svgEl.appendChild(container);
 }
@@ -831,13 +896,23 @@ function checkCompletion(){
 function render(){
   renderTabs();
   renderPalette();
-  renderMap();
+  graphBtnEl.classList.toggle('hidden', category!=='superficies');
+  graphBtnEl.classList.toggle('active', viewMode==='graph');
+  graphBtnEl.textContent = viewMode==='graph' ? 'Mapa' : 'Grafo';
+  renderCanvas();
   updateReadout();
   noteEl.innerHTML = `<b>Sobre este mapa:</b> ${MAPS[current].note}`;
   renderSwitchPrompt();
 }
 
-document.getElementById('clearBtn').onclick = ()=>{ regionColors = {}; wasComplete = false; hideBanner(); hideModal(); renderMap(); updateReadout(); };
+graphBtnEl.onclick = ()=>{
+  viewMode = viewMode==='graph' ? 'map' : 'graph';
+  graphBtnEl.classList.toggle('active', viewMode==='graph');
+  graphBtnEl.textContent = viewMode==='graph' ? 'Mapa' : 'Grafo';
+  renderCanvas();
+};
+
+document.getElementById('clearBtn').onclick = ()=>{ regionColors = {}; wasComplete = false; hideBanner(); hideModal(); renderCanvas(); updateReadout(); };
 
 render();
 </script>
