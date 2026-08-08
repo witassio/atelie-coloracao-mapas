@@ -69,6 +69,13 @@
     background:var(--brass);color:var(--ink);border-color:var(--brass);font-weight:700;
   }
   nav.tabs button .n{opacity:.6;font-size:10px;display:block;margin-top:2px;}
+  .done-badge{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:15px;height:15px;border-radius:50%;
+    background:#4CAF6D;color:#0F1826;
+    font-size:10px;font-weight:900;line-height:1;
+    margin-right:5px;vertical-align:middle;
+  }
   nav.tabs button.active .n{opacity:.65;}
 
   .stage{
@@ -231,7 +238,7 @@
     <div id="switchPromptContainer"></div>
   </section>
 
-  <footer>ateliê de coloração · v1.2 · Witássio Oliveira (UFAL)</footer>
+  <footer>ateliê de coloração · v1.3 · Witássio Oliveira (UFAL)</footer>
 </div>
 
   <div class="modal-overlay hidden" id="modalOverlay">
@@ -690,6 +697,8 @@ let category = 'principal';
 let current = 'alemanha';
 let selectedColor = 0;
 let regionColors = {};
+let mapProgress = {}; // key -> regionColors snapshot, kept across map switches
+let completedMaps = {}; // key -> true once solved (persists until Limpar)
 let mapCache = {};
 let wasComplete = false;
 let viewMode = 'map';
@@ -732,14 +741,16 @@ function getMapData(key){
 }
 
 function switchMap(key){
+  mapProgress[current] = regionColors;
   current = key;
-  regionColors = Object.assign({}, MAPS[key].initialColors || {});
+  regionColors = mapProgress[key] || Object.assign({}, MAPS[key].initialColors || {});
   selectedColor = 0;
-  wasComplete = false;
+  wasComplete = !!completedMaps[key];
   viewMode = 'map';
   hideBanner();
   hideModal();
   render();
+  checkCompletion();
 }
 
 function switchCategory(cat){
@@ -775,7 +786,8 @@ function renderTabs(){
     Object.entries(MAPS).filter(([k,m])=>m.group===gKey).forEach(([key,m])=>{
       const btn = document.createElement('button');
       btn.className = key===current ? 'active':'';
-      btn.innerHTML = `${m.label}<span class="n">${m.n}</span>`;
+      const badge = completedMaps[key] ? '<span class="done-badge" title="Concluído">✓</span>' : '';
+      btn.innerHTML = `${badge}${m.label}<span class="n">${m.n}</span>`;
       btn.onclick = ()=>switchMap(key);
       row.appendChild(btn);
     });
@@ -1049,6 +1061,11 @@ function checkCompletion(){
     text = `Parabéns! Você coloriu o mapa inteiro usando apenas ${usedColors} ${usedColors===1?'cor':'cores'}, sem nenhum conflito entre vizinhos. Bora tentar outro mapa no ateliê?`;
   }
 
+  if(kind==='success' && !completedMaps[current]){
+    completedMaps[current] = true;
+    renderTabs();
+  }
+
   showBanner(kind, text);
   if(!wasComplete){ showModal(kind, text); }
   wasComplete = true;
@@ -1085,7 +1102,17 @@ numbersBtnEl.onclick = ()=>{
   renderCanvas();
 };
 
-document.getElementById('clearBtn').onclick = ()=>{ regionColors = Object.assign({}, MAPS[current].initialColors || {}); wasComplete = false; hideBanner(); hideModal(); renderCanvas(); updateReadout(); };
+document.getElementById('clearBtn').onclick = ()=>{
+  regionColors = Object.assign({}, MAPS[current].initialColors || {});
+  mapProgress[current] = regionColors;
+  wasComplete = false;
+  delete completedMaps[current];
+  hideBanner();
+  hideModal();
+  renderCanvas();
+  updateReadout();
+  renderTabs();
+};
 
 render();
 </script>
